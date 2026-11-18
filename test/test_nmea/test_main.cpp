@@ -66,8 +66,8 @@ void test_nmea_rmc_void_no_time() {
 void test_nmea_truncated_line_ignored() {
   NmeaParser p;
   TEST_ASSERT_EQUAL_INT(0, feedAll(p, "$GNRMC,083000.000,A,5250.21", 0));
-  TEST_ASSERT_EQUAL_INT(1, feedAll(p, kRmc, 100000));  // a new '$' resets the line
-  TEST_ASSERT_EQUAL_INT64(100000, p.rmcMarkUs());
+  TEST_ASSERT_EQUAL_INT(1, feedAll(p, kRmc, 500000));  // a new '$' resets the line
+  TEST_ASSERT_EQUAL_INT64(500000, p.rmcMarkUs());  // 500 ms later: a new burst
 }
 
 void test_nmea_mark_is_time_of_dollar() {
@@ -95,6 +95,31 @@ void test_nmea_mark_is_start_of_burst() {
   const int64_t burst2 = t + 87;
   for (const char* c = kRmc; *c; ++c) p.feed(*c, t += 87);
   TEST_ASSERT_EQUAL_INT64(burst2, p.rmcMarkUs());
+}
+
+void test_nmea_mark_survives_delayed_callback_mid_sentence() {
+  // Byte times are reconstructed from when the UART callback runs: a callback delayed by 30 ms
+  // makes a fake gap in the middle of the RMC. The mark must stay at the burst start.
+  NmeaParser p;
+  int64_t t = 1000000;
+  for (const char* c = kGga; *c; ++c) p.feed(*c, t += 87);
+  int n = 0, i = 0;
+  for (const char* c = kRmc; *c; ++c, ++i) {
+    if (i == 20) t += 30000;
+    n += p.feed(*c, t += 87) ? 1 : 0;
+  }
+  TEST_ASSERT_EQUAL_INT(1, n);
+  TEST_ASSERT_EQUAL_INT64(1000000 + 87, p.rmcMarkUs());
+}
+
+void test_nmea_mark_survives_pause_between_sentences() {
+  // A multi-constellation receiver may pause tens of ms inside its 1 Hz burst.
+  NmeaParser p;
+  int64_t t = 1000000;
+  for (const char* c = kGga; *c; ++c) p.feed(*c, t += 87);
+  t += 60000;
+  for (const char* c = kRmc; *c; ++c) p.feed(*c, t += 87);
+  TEST_ASSERT_EQUAL_INT64(1000000 + 87, p.rmcMarkUs());
 }
 
 void test_timebase_utc_ms() {
@@ -128,6 +153,8 @@ int main(int, char**) {
   RUN_TEST(test_nmea_truncated_line_ignored);
   RUN_TEST(test_nmea_mark_is_time_of_dollar);
   RUN_TEST(test_nmea_mark_is_start_of_burst);
+  RUN_TEST(test_nmea_mark_survives_delayed_callback_mid_sentence);
+  RUN_TEST(test_nmea_mark_survives_pause_between_sentences);
   RUN_TEST(test_timebase_utc_ms);
   RUN_TEST(test_timebase_fresh_10s_holdover_600s);
   return UNITY_END();

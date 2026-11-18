@@ -8,6 +8,10 @@ namespace radio {
 
 struct Event {
   bool rxDone, crcErr, headerValid, headerErr, preamble, txDone;
+  // Local time (esp_timer, us) of the last DIO1 rising edge. It marks RX_DONE only if no other
+  // routed flag was still pending (rxDoneEdge): otherwise DIO1 was already high.
+  int64_t edgeUs;
+  bool rxDoneEdge;
 };
 
 struct Status {

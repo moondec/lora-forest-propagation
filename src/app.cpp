@@ -1,6 +1,8 @@
 #include "app.h"
 
 #include <Arduino.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <stdarg.h>
 #include <string.h>
 
@@ -21,6 +23,7 @@ static settings::S st;
 static core::ButtonGestures gestures;
 static uint32_t lastButtonMs = 0, lastDisplayMs = 0, ledOffAt = 0, noticeUntil = 0;
 static char notice[12] = "";
+static bool bootMarked = false;
 
 settings::S& cfgRef() { return st; }
 
@@ -53,9 +56,9 @@ void writeMarker(const char* text) {
   say("MARK %lu %s", static_cast<unsigned long>(m.cycle), m.text);
 }
 
-// Starts a new log file; with force it rotates even if one is open (before dumping it).
-static void openLog(bool force) {
-  if ((storage::isOpen() && !force) || !gnss::timeValid()) return;
+// Starts a new log file when none is open and GNSS time is valid.
+static void openLog() {
+  if (storage::isOpen() || !gnss::timeValid()) return;
   core::HeaderRec h{};
   h.role = cfg::kRole;
   h.nodeId = st.nodeId;
@@ -72,12 +75,27 @@ static void openLog(bool force) {
   h.payloadLen = 20;
   h.utcS = static_cast<uint32_t>(gnss::utcMs() / 1000);
   core::copyText(h.fwTag, cfg::kFwTag, sizeof h.fwTag);
-  if (storage::openNew(st.fileCounter, h)) {
+  uint32_t number = st.fileCounter;
+  if (storage::openNew(&number, h)) {
     say("LOG %s", storage::currentName());
-    ++st.fileCounter;
+    st.fileCounter = number + 1;
     settings::save(st);
     roleLogOpened();
+    if (!bootMarked) {  // a watchdog or brown-out reset shows up in the log, not as a silent gap
+      bootMarked = true;
+      char text[23];
+      snprintf(text, sizeof text, "boot reset=%d", static_cast<int>(esp_reset_reason()));
+      writeMarker(text);
+    }
   }
+}
+
+// Erasing 5 MB of flash takes longer than the watchdog timeout.
+static void formatLog() {
+  disableLoopWDT();
+  const bool ok = storage::format();
+  enableLoopWDT();
+  say(ok ? "OK format" : "ERR format");
 }
 
 static void printStatus() {
@@ -92,7 +110,7 @@ static void printStatus() {
 }
 
 static void printHelp() {
-  say("status | files | dump <file> | erase <file|all> confirm | latency <ms> | id <n> | marker <text>");
+  say("status | files | dump <file> | erase <file|all> confirm | format confirm | latency <ms> | id <n> | marker <text>");
   if (cfg::kTower) say("window HH:MM-HH:MM | window off   (UTC transmit window)");
   else say("session <id> | stop <id> | h <m> | mode static|sweep|reference|drift");
 }
@@ -107,8 +125,9 @@ static void handle(const core::Command& c) {
     case core::Cmd::Status: printStatus(); return;
     case core::Cmd::Files: storage::listFiles(emitLine); say("OK files"); return;
     case core::Cmd::Dump:
-      // Dumping the file being written: close it first, so a downloaded file never changes.
-      if (storage::isOpen() && strcmp(c.arg, storage::currentName()) == 0) openLog(true);
+      // Dumping the file being written: close it first, so a downloaded file never changes. This
+      // works without GNSS time (indoors); the next file opens once time is valid.
+      if (storage::isOpen() && strcmp(c.arg, storage::currentName()) == 0 && storage::close()) openLog();
       if (!oplink::startDump(c.arg)) say("ERR dump %s", c.arg);
       return;
     case core::Cmd::Erase: say(storage::erase(c.arg) ? "OK erase %s" : "ERR erase %s", c.arg); return;
@@ -124,6 +143,7 @@ static void handle(const core::Command& c) {
       say("OK id %d (display updates after restart)", c.a);
       return;
     case core::Cmd::Marker: writeMarker(c.arg); return;
+    case core::Cmd::Format: formatLog(); return;
     default:
       if (!roleCommand(c)) say("ERR not available on this node");
   }
@@ -170,26 +190,39 @@ void setup() {
   const bool radioOk = boardOk && radio::begin();
   if (!radioOk || !fsOk) {
     say("FATAL board %d radio %d fs %d", boardOk, radioOk, fsOk);
+    if (!fsOk) say("log partition not mounted; download what you can, then: format confirm");
     display::show(radioOk ? "" : "RADIO ERR", fsOk ? "" : "FLASH ERR", "see serial");
-    for (;;) {
+    for (;;) {  // not watched by the watchdog: waits for the operator
       board::led(60, 0, 0);
       delay(500);
       board::led(0, 0, 0);
       delay(500);
+      char line[96];
+      if (!fsOk && oplink::readLine(line, sizeof line) && core::parseCommand(line).cmd == core::Cmd::Format) {
+        say(storage::format() ? "OK format, restarting" : "ERR format");
+        delay(100);
+        ESP.restart();
+      }
     }
   }
   say("%s ready; type help", name);
   roleSetup();
+  // A hung loop (e.g. the SX1262 BUSY wait inside RadioLib) resets the board after 8 s instead of
+  // stopping the node for good. The core starts the task watchdog with panic enabled.
+  const esp_task_wdt_config_t wdt = {.timeout_ms = 8000, .idle_core_mask = 0, .trigger_panic = true};
+  if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+  enableLoopWDT();
 }
 
 void loop() {
+  // Before the role: the records of the first slot after GNSS time becomes valid need an open file.
+  openLog();
   roleLoop();
   // Everything below may block for milliseconds (flash, NVS, USB), so it runs only when no
   // radio deadline is near; commands simply wait a few hundred ms in their queues.
   if (roleRadioQuiet()) {
     char line[96];
     if (oplink::readLine(line, sizeof line)) handle(core::parseCommand(line));
-    openLog(false);
     oplink::service();
     storage::service();
   }

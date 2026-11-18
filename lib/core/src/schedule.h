@@ -20,6 +20,12 @@ struct Slot {
   int64_t endMs;    // UTC ms, exclusive
 };
 
+// Tower decision for the next slot: wait, start the transmission (prepared up to 30 ms ahead,
+// still sent up to 100 ms late; tx_offset_us records the delay), or skip it as late.
+enum class TxAction { Wait, Send, Late };
+constexpr int64_t kTxPrepareMs = 30, kTxMaxLateMs = 100;
+TxAction txAction(int64_t nowMs, int64_t txAtMs);
+
 uint8_t sfOf(int slot);
 Slot slotAt(int64_t utcMs);
 int64_t txTimeMs(uint32_t cycle, int slot);

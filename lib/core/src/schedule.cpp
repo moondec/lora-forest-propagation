@@ -4,6 +4,12 @@ namespace core {
 
 uint8_t sfOf(int slot) { return slot == 0 ? 7 : 12; }
 
+TxAction txAction(int64_t nowMs, int64_t txAtMs) {
+  if (nowMs - txAtMs > kTxMaxLateMs) return TxAction::Late;
+  if (txAtMs - nowMs > kTxPrepareMs) return TxAction::Wait;
+  return TxAction::Send;
+}
+
 Slot slotAt(int64_t utcMs) {
   // Shift by the SF7 lead so that window boundaries fall on multiples of the cycle.
   const int64_t shifted = utcMs + kWindowLeadMs;

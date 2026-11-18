@@ -12,6 +12,24 @@ void tearDown() {}
 // Same bytes as GOLDEN_RX_HEX in tests/test_lora_logs.py: keeps firmware and converter in step.
 static const char* kGoldenRxHex = "010cf8ca26070b029bfbd3fa64fb2efb88487e1fe2e6af09090bf90201020302";
 
+// Same bytes as GOLDEN_FRAME_HEX in tests/test_lora_logs.py.
+static const char* kGoldenFrameHex = "040cf8ca2607f9ca26070c01c7cfffffecfadff8010102000000000000000000";
+
+static RxFrameRec goldenFrame() {
+  RxFrameRec f{};
+  f.sf = 12;
+  f.cycle = 119982840;
+  f.rxCycle = 119982841;  // one cycle off: the two receivers disagree on UTC
+  f.rxSf = 12;
+  f.flags = kFrameTimingValid;
+  f.arrivalUs = -12345;
+  f.rssiPkt10 = -1300;
+  f.snr100 = -1825;
+  f.txNode = 1;
+  f.txSeq = 513;
+  return f;
+}
+
 static RxSlotRec goldenRx() {
   RxSlotRec r{};
   r.sf = 12;
@@ -44,6 +62,19 @@ void test_rx_record_golden() {
   char hex[2 * kRecordLen + 1];
   toHex(b, kRecordLen, hex);
   TEST_ASSERT_EQUAL_STRING(kGoldenRxHex, hex);
+}
+
+void test_frame_record_golden_and_roundtrip() {
+  uint8_t b[kRecordLen];
+  goldenFrame().encode(b);
+  char hex[2 * kRecordLen + 1];
+  toHex(b, kRecordLen, hex);
+  TEST_ASSERT_EQUAL_STRING(kGoldenFrameHex, hex);
+  RxFrameRec f{};
+  TEST_ASSERT_TRUE(RxFrameRec::decode(b, &f));
+  TEST_ASSERT_EQUAL_UINT32(119982841, f.rxCycle);
+  TEST_ASSERT_EQUAL_INT32(-12345, f.arrivalUs);
+  TEST_ASSERT_EQUAL_UINT16(513, f.txSeq);
 }
 
 void test_all_record_roundtrips() {
@@ -112,6 +143,7 @@ void test_live_csv_received_and_lost() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_rx_record_golden);
+  RUN_TEST(test_frame_record_golden_and_roundtrip);
   RUN_TEST(test_all_record_roundtrips);
   RUN_TEST(test_context_truncates_long_ids);
   RUN_TEST(test_live_csv_received_and_lost);

@@ -60,6 +60,14 @@ void test_parse_erase_needs_confirm() {
   TEST_ASSERT_EQUAL_STRING("all", c.arg);
 }
 
+void test_parse_format_needs_confirm() {
+  TEST_ASSERT_TRUE(parseCommand("format").cmd == Cmd::Error);
+  TEST_ASSERT_TRUE(parseCommand("format now").cmd == Cmd::Error);
+  Command c = parseCommand("format confirm");
+  TEST_ASSERT_TRUE(c.cmd == Cmd::Format);
+  TEST_ASSERT_TRUE(c.confirmed);
+}
+
 void test_parse_misc() {
   TEST_ASSERT_TRUE(parseCommand("status").cmd == Cmd::Status);
   TEST_ASSERT_TRUE(parseCommand("").cmd == Cmd::None);
@@ -135,6 +143,7 @@ int main(int, char**) {
   RUN_TEST(test_parse_mode);
   RUN_TEST(test_parse_window_and_off);
   RUN_TEST(test_parse_erase_needs_confirm);
+  RUN_TEST(test_parse_format_needs_confirm);
   RUN_TEST(test_parse_misc);
   RUN_TEST(test_triple_press);
   RUN_TEST(test_two_or_four_presses_nothing);

@@ -24,7 +24,9 @@ class NmeaParser {
   // The receiver starts each burst at a fixed delay after the UTC second, whereas the RMC's
   // position inside the burst varies with the number of GSV sentences before it.
   int64_t rmcMarkUs() const { return markUs_; }
-  static constexpr int64_t kBurstGapUs = 20000;  // silence that separates two bursts
+  // Silence that separates two 1 Hz bursts. Well above callback delays and intra-burst pauses
+  // (tens of ms), well below the ~900 ms between bursts.
+  static constexpr int64_t kBurstGapUs = 200000;
 
  private:
   bool finishLine();

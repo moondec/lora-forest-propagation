@@ -7,6 +7,20 @@ using namespace core;
 void setUp() {}
 void tearDown() {}
 
+void test_tx_action_prepares_30ms_ahead() {
+  const int64_t txAt = txTimeMs(1000, 1);
+  TEST_ASSERT_TRUE(txAction(txAt - 31, txAt) == TxAction::Wait);
+  TEST_ASSERT_TRUE(txAction(txAt - 30, txAt) == TxAction::Send);
+  TEST_ASSERT_TRUE(txAction(txAt, txAt) == TxAction::Send);
+}
+
+void test_tx_action_tolerates_100ms_late() {
+  // The receiver tolerates ~300 ms and tx_offset_us records the delay.
+  const int64_t txAt = txTimeMs(1000, 0);
+  TEST_ASSERT_TRUE(txAction(txAt + 100, txAt) == TxAction::Send);
+  TEST_ASSERT_TRUE(txAction(txAt + 101, txAt) == TxAction::Late);
+}
+
 void test_slot_sf7_window() {
   Slot s = slotAt(15000LL * 1000);
   TEST_ASSERT_EQUAL_UINT32(1000, s.cycle);
@@ -76,6 +90,8 @@ void test_tx_window_wraps() {
 
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_tx_action_prepares_30ms_ahead);
+  RUN_TEST(test_tx_action_tolerates_100ms_late);
   RUN_TEST(test_slot_sf7_window);
   RUN_TEST(test_slot_sf7_window_starts_before_cycle);
   RUN_TEST(test_slot_sf12_window);

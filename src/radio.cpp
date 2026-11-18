@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <RadioLib.h>
 #include <SPI.h>
+#include <esp_timer.h>
 
 #include "config.h"
 
@@ -12,8 +13,21 @@ namespace radio {
 static Module mod(cfg::kPinNss, cfg::kPinDio1, RADIOLIB_NC, cfg::kPinBusy, SPI);
 static SX1262 sx(&mod);
 static volatile bool dio1Flag = false;
+static volatile int64_t dio1EdgeUs = 0;
 
-static void IRAM_ATTR onDio1() { dio1Flag = true; }
+static void IRAM_ATTR onDio1() {
+  dio1EdgeUs = esp_timer_get_time();  // ISR-safe
+  dio1Flag = true;
+}
+
+static int64_t edgeTime() {  // 64-bit value written by the ISR: read until two reads agree
+  int64_t a, b;
+  do {
+    a = dio1EdgeUs;
+    b = dio1EdgeUs;
+  } while (a != b);
+  return a;
+}
 
 bool begin() {
   int16_t st = sx.begin(cfg::kFreqMHz, cfg::kBwKHz, 7, cfg::kCrDenom, cfg::kSyncWord, cfg::kTxPowerDbm,
@@ -64,6 +78,8 @@ Event poll() {
   e.headerValid = irq & RADIOLIB_SX126X_IRQ_HEADER_VALID;
   e.headerErr = irq & RADIOLIB_SX126X_IRQ_HEADER_ERR;
   e.preamble = irq & RADIOLIB_SX126X_IRQ_PREAMBLE_DETECTED;
+  e.edgeUs = edgeTime();
+  e.rxDoneEdge = e.rxDone && !e.headerValid && !e.preamble && !e.headerErr;
   // With RX_DONE pending, readData() checks the CRC/header bits and clears everything itself;
   // otherwise clear the informational flags now so DIO1 can rise again for the next event.
   if (!e.rxDone && !e.txDone && irq) sx.clearIrqFlags(irq);
@@ -72,7 +88,9 @@ Event poll() {
 
 size_t read(uint8_t* buf, size_t max) {
   const size_t len = sx.getPacketLength();
-  sx.readData(buf, len < max ? len : max);  // the data are read even when it reports a CRC mismatch
+  // Never pass 0: RadioLib reads the whole packet then, whatever its length. The data are read
+  // even when it reports a CRC mismatch.
+  sx.readData(buf, max);
   return len < max ? len : max;
 }
 

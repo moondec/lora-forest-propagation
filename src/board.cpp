@@ -65,12 +65,13 @@ bool buttonPressed() {
 
 void led(uint8_t r, uint8_t g, uint8_t b) { neopixelWrite(cfg::kPinLed, r, g, b); }
 
-// The core's temperatureRead() installs the sensor for 10-50 C only; winter fieldwork needs -10 C and below.
+// The core's temperatureRead() installs the sensor for 10-50 C only. Winter fieldwork (30 m on the
+// SA tower in January) goes below -10 C, so use the -30..50 C range. This is chip temperature.
 static temperature_sensor_handle_t tsens = nullptr;
 
 int8_t tempC() {
   if (!tsens) {
-    temperature_sensor_config_t c = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    temperature_sensor_config_t c = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-30, 50);
     if (temperature_sensor_install(&c, &tsens) != ESP_OK || temperature_sensor_enable(tsens) != ESP_OK) {
       tsens = nullptr;
       return INT8_MIN;

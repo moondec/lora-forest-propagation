@@ -12,7 +12,7 @@ void setLatencyMs(int32_t latencyMs);
 // Thread-safe snapshot of the last parsed state.
 core::GnssState state();
 bool timeValid();  // within 600 s holdover of the last valid RMC
-bool timeFresh();  // valid RMC within the last 10 s
+bool timeFresh();  // last RMC valid and at most 10 s old
 int64_t utcMs();  // valid only if timeValid()
 int64_t utcUs();
 // 0 none, 1 time only, 2 position fix (as in the packet).

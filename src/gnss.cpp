@@ -71,7 +71,7 @@ bool timeValid() {
 bool timeFresh() {
   const int64_t now = esp_timer_get_time();
   portENTER_CRITICAL(&mux);
-  const bool v = tb.fresh(now);
+  const bool v = tb.fresh(now) && snap.rmcValid;  // a void RMC (fix lost) ends "fresh" at once
   portEXIT_CRITICAL(&mux);
   return v;
 }

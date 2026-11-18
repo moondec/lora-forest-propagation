@@ -92,6 +92,10 @@ Command parseCommand(const char* line) {
       return error(lat ? "latency: -999..999 ms" : "id: 1-254");
     c.cmd = lat ? Cmd::Latency : Cmd::NodeId;
     c.a = static_cast<int>(v);
+  } else if (!strcmp(verb, "format")) {
+    if (strcmp(rest, "confirm") != 0) return error("format confirm (erases every log)");
+    c.cmd = Cmd::Format;
+    c.confirmed = true;
   } else if (!strcmp(verb, "marker")) {
     c.cmd = Cmd::Marker;
     copyText(c.arg, rest, 23);

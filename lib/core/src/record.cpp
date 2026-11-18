@@ -66,6 +66,36 @@ bool RxSlotRec::decode(const uint8_t* d, RxSlotRec* r) {
   return true;
 }
 
+void RxFrameRec::encode(uint8_t o[kRecordLen]) const {
+  memset(o, 0, kRecordLen);
+  o[0] = kRecRxFrame;
+  o[1] = sf;
+  putU32(o + 2, cycle);
+  putU32(o + 6, rxCycle);
+  o[10] = rxSf;
+  o[11] = flags;
+  putI32(o + 12, arrivalUs);
+  putI16(o + 16, rssiPkt10);
+  putI16(o + 18, snr100);
+  o[20] = txNode;
+  putU16(o + 21, txSeq);
+}
+
+bool RxFrameRec::decode(const uint8_t* d, RxFrameRec* r) {
+  if (d[0] != kRecRxFrame) return false;
+  r->sf = d[1];
+  r->cycle = getU32(d + 2);
+  r->rxCycle = getU32(d + 6);
+  r->rxSf = d[10];
+  r->flags = d[11];
+  r->arrivalUs = getI32(d + 12);
+  r->rssiPkt10 = getI16(d + 16);
+  r->snr100 = getI16(d + 18);
+  r->txNode = d[20];
+  r->txSeq = getU16(d + 21);
+  return true;
+}
+
 void TxRec::encode(uint8_t o[kRecordLen]) const {
   memset(o, 0, kRecordLen);
   o[0] = kRecTx;

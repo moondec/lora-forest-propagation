@@ -2,6 +2,7 @@
 #ifdef ROLE_TOWER
 
 #include <Arduino.h>
+#include <esp_timer.h>
 
 #include "airtime.h"
 #include "app.h"
@@ -19,7 +20,7 @@ static core::DutyGuard duty;
 static uint16_t seq = 0;
 static uint32_t sentCount = 0;
 static bool txBusy = false;
-static int64_t txDeadlineMs = 0;
+static int64_t txDeadlineUs = 0;  // local monotonic time: works without GNSS time
 static core::TxRec pending{};       // record of the transmission in progress
 static uint64_t lastKey = 0;       // last slot handled, as cycle*2 + slot (never goes backwards)
 static uint32_t airMs[2] = {0, 0};  // SF7, SF12
@@ -93,14 +94,14 @@ static void transmit(uint32_t cycle, int slot, int64_t txAt) {
   duty.record(txAt, airMs[slot]);
   ++seq;
   txBusy = true;
-  txDeadlineMs = txAt + airMs[slot] + 500;
+  txDeadlineUs = esp_timer_get_time() + (static_cast<int64_t>(airMs[slot]) + 500) * 1000;
   board::led(0, 0, 60);
 }
 
 void roleLoop() {
   if (txBusy) {
     const radio::Event e = radio::poll();
-    const bool timedOut = gnss::timeValid() && gnss::utcMs() > txDeadlineMs;
+    const bool timedOut = esp_timer_get_time() > txDeadlineUs;
     if (e.txDone || timedOut) {
       radio::finishTx();
       if (timedOut && !e.txDone) pending.status = core::kTxRadioError;
@@ -127,13 +128,14 @@ void roleLoop() {
   const uint64_t key = static_cast<uint64_t>(s.cycle) * 2 + s.slot;
   if (key <= lastKey) return;  // this slot is done (also after a small backward clock step)
   const int64_t txAt = core::txTimeMs(s.cycle, s.slot);
-  if (now > txAt) {  // missed: the loop was busy or time just became valid
-    lastKey = key;
-    logSkip(s.cycle, s.slot, core::kTxLate);
-    return;
+  switch (core::txAction(now, txAt)) {
+    case core::TxAction::Wait: return;
+    case core::TxAction::Late:  // the loop was busy or time just became valid
+      lastKey = key;
+      logSkip(s.cycle, s.slot, core::kTxLate);
+      return;
+    case core::TxAction::Send: break;
   }
-  // Prepare 30 ms ahead so a short stall elsewhere in the loop does not cost the slot.
-  if (txAt - now > 30) return;
   lastKey = key;
   const settings::S& c = cfgRef();
   if (!core::inTxWindow(txAt / 1000, c.winStartMin, c.winEndMin, c.windowOn)) {
@@ -178,7 +180,10 @@ bool roleRadioQuiet() {
   const int64_t now = gnss::utcMs();
   const core::Slot s = core::slotAt(now);
   const int64_t txAt = core::txTimeMs(s.cycle, s.slot);
-  return txAt - now > 200 || now > txAt;
+  const bool done = static_cast<uint64_t>(s.cycle) * 2 + s.slot <= lastKey;
+  // Quiet well before a transmit time, or after it once the slot is handled (not too close to
+  // the window end, so a long job cannot run into the next transmit time).
+  return txAt - now > 200 || (done && s.endMs - now > 200);
 }
 
 }  // namespace app

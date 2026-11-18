@@ -37,9 +37,11 @@ static bool parseCoord(const char* v, const char* hemi, int degDigits, double* o
 }
 
 bool NmeaParser::feed(char c, int64_t localUs) {
-  if (localUs - lastByteUs_ > kBurstGapUs) burstStartUs_ = localUs;
+  const int64_t gap = localUs - lastByteUs_;
   lastByteUs_ = localUs;
   if (c == '$') {
+    // Only a '$' can start a burst: a late UART callback makes fake gaps inside sentences.
+    if (gap > kBurstGapUs) burstStartUs_ = localUs;
     len_ = 0;
     return false;
   }

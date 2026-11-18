@@ -4,10 +4,13 @@
 #ifdef ROLE_MOBILE
 
 #include <Arduino.h>
+#include <esp_timer.h>
 
+#include "airtime.h"
 #include "app.h"
 #include "board.h"
 #include "config.h"
+#include "context.h"
 #include "gnss.h"
 #include "packet.h"
 #include "radio.h"
@@ -30,10 +33,13 @@ struct Window {
 };
 
 static Window win;
-static core::ContextRec ctx{};
+// Context changes wait for the open window to close, so they never relabel its packet.
+static core::ContextGate gate;
 static bool yellow = false;
 static char lastResult[12] = "";
 static uint32_t slots = 0, rxCount = 0;
+static uint64_t lastFinalKey = 0;   // highest slot already recorded: never recorded twice
+static int64_t airUs[2] = {0, 0};  // SF7, SF12 time on air of the tower packet
 static const char* kModes[] = {"static", "sweep", "reference", "drift"};
 
 // Slots in time order; never goes backwards, so a small step of the clock cannot reopen a slot.
@@ -44,16 +50,32 @@ static core::Slot slotOfKey(uint64_t k) {
 
 static void logContext() {
   uint8_t rec[core::kRecordLen];
-  ctx.encode(rec);
+  gate.current().encode(rec);
   logRecord(rec);
 }
 
+static void sayContext(const char* prefix, const core::ContextRec& c) {
+  say("%ssession %s stop %s h %.2f mode %s", prefix, c.sessionId, c.stopId, c.heightCm / 100.0, kModes[c.mode & 3]);
+}
+
+// After the closing window's record is written: a deferred context change takes effect now.
+static void applyPendingContext() {
+  core::ContextRec c{};
+  if (!gate.take(&c)) return;
+  logContext();
+  sayContext("CTX ", c);
+}
+
 void roleSetup() {
-  const settings::S& c = cfgRef();
-  ctx.mode = c.mode < 4 ? c.mode : core::kModeStatic;
-  ctx.heightCm = c.heightCm;
-  core::copyText(ctx.stopId, c.stop[0] ? c.stop : "none", sizeof ctx.stopId);
-  core::copyText(ctx.sessionId, c.session[0] ? c.session : "none", sizeof ctx.sessionId);
+  const settings::S& s = cfgRef();
+  core::ContextRec c{};
+  c.mode = s.mode < 4 ? s.mode : core::kModeStatic;
+  c.heightCm = s.heightCm;
+  core::copyText(c.stopId, s.stop[0] ? s.stop : "none", sizeof c.stopId);
+  core::copyText(c.sessionId, s.session[0] ? s.session : "none", sizeof c.sessionId);
+  gate = core::ContextGate(c);
+  airUs[0] = llround(core::loraAirtimeMs(7, 125000, cfg::kCrDenom, cfg::kPreamble, 20, true, true, false) * 1000);
+  airUs[1] = llround(core::loraAirtimeMs(12, 125000, cfg::kCrDenom, cfg::kPreamble, 20, true, true, true) * 1000);
 }
 
 void roleLogOpened() { logContext(); }
@@ -93,11 +115,12 @@ static void writeRecord(const Window& w, uint8_t extraFlags) {
   r.encode(rec);
   logRecord(rec);
   ++slots;
+  if (keyOf(w.slot) > lastFinalKey) lastFinalKey = keyOf(w.slot);
   if (w.received) ++rxCount;
   if (!w.listening) return;  // not-listened slots are logged but not shown as results
 
   char line[96];
-  core::formatRxCsv(r, ctx, line, sizeof line);
+  core::formatRxCsv(r, gate.current(), line, sizeof line);
   say("%s", line);
   if (w.received) {
     snprintf(lastResult, sizeof lastResult, "%u:%.1f", r.sf, w.st.rssiPkt);
@@ -106,6 +129,28 @@ static void writeRecord(const Window& w, uint8_t extraFlags) {
     snprintf(lastResult, sizeof lastResult, "%u:LOST", r.sf);
     flashLed(50, 0, 0, 150);
   }
+}
+
+// Companion record for each frame in our format: arrival time against the schedule (inter-node
+// clock offset) and the packet's own cycle (a UTC disagreement shows as cycle_diff != 0).
+static void logFrame(const radio::Event& e, const radio::Status& st, const core::Packet& p, bool matched) {
+  core::RxFrameRec f{};
+  f.sf = core::sfOf(win.slot.slot);
+  f.cycle = win.slot.cycle;
+  f.rxCycle = p.cycle;
+  f.rxSf = p.sf;
+  f.flags = (matched ? core::kFrameMatched : 0) | (e.rxDoneEdge ? core::kFrameTimingValid : 0);
+  const int64_t edgeUtcUs = gnss::utcUs() - (esp_timer_get_time() - e.edgeUs);
+  const int64_t schedEndUs = core::txTimeMs(win.slot.cycle, win.slot.slot) * 1000 + airUs[win.slot.slot];
+  const int64_t d = edgeUtcUs - schedEndUs;
+  f.arrivalUs = static_cast<int32_t>(d > INT32_MAX ? INT32_MAX : (d < INT32_MIN ? INT32_MIN : d));
+  f.rssiPkt10 = clamp16(st.rssiPkt * 10);
+  f.snr100 = clamp16(st.snr * 100);
+  f.txNode = p.nodeId;
+  f.txSeq = p.seq;
+  uint8_t rec[core::kRecordLen];
+  f.encode(rec);
+  logRecord(rec);
 }
 
 static void serviceRadio() {
@@ -125,12 +170,14 @@ static void serviceRadio() {
     return;
   }
   core::Packet p{};
-  if (!win.received && core::decodePacket(buf, n, &p) &&
-      core::matchesSlot(p, win.slot.cycle, core::sfOf(win.slot.slot))) {
+  const bool ours = core::decodePacket(buf, n, &p);
+  const bool matched = ours && core::matchesSlot(p, win.slot.cycle, core::sfOf(win.slot.slot));
+  if (ours) logFrame(e, st, p, matched);
+  if (matched && !win.received) {
     win.received = true;
     win.st = st;
     win.pkt = p;
-  } else if (!win.received) {
+  } else if (!matched) {
     win.foreign = true;  // valid LoRa CRC but not our packet for this slot
   }
 }
@@ -154,9 +201,10 @@ void roleLoop() {
     if (win.active) {
       serviceRadio();
       radio::standby();
-      writeRecord(win, 0);
+      writeRecord(win, gate.changedDuringWindow() ? core::kFlagContextChanged : 0);
       win.active = false;
     }
+    applyPendingContext();
     if (!yellow) board::led(30, 30, 0);
     yellow = true;
     return;
@@ -168,12 +216,14 @@ void roleLoop() {
   const core::Slot s = core::slotAt(gnss::utcMs());
   const uint64_t key = keyOf(s);
   if (!win.active) {
-    openWindow(s);
+    if (key > lastFinalKey) openWindow(s);  // e.g. time returned inside a slot already recorded
   } else if (key > win.key) {
     serviceRadio();  // a packet may be waiting in the radio buffer: read it before closing
     const Window done = win;
+    const uint8_t ctxFlag = gate.changedDuringWindow() ? core::kFlagContextChanged : 0;
     openWindow(s);  // receive the next slot first, then do the slower logging
-    writeRecord(done, core::kFlagTimeValid);
+    writeRecord(done, core::kFlagTimeValid | ctxFlag);
+    applyPendingContext();
     // Slots skipped entirely (the loop stalled) still get a record each.
     for (uint64_t k = done.key + 1, n = 0; k < key && n < kMaxGapRecords; ++k, ++n) {
       Window gap{};
@@ -186,6 +236,7 @@ void roleLoop() {
 
 bool roleCommand(const core::Command& c) {
   settings::S& st = cfgRef();
+  core::ContextRec ctx = gate.requested();
   switch (c.cmd) {
     case core::Cmd::Session: core::copyText(ctx.sessionId, c.arg, sizeof ctx.sessionId); break;
     case core::Cmd::Stop: core::copyText(ctx.stopId, c.arg, sizeof ctx.stopId); break;
@@ -198,18 +249,24 @@ bool roleCommand(const core::Command& c) {
   st.heightCm = ctx.heightCm;
   st.mode = ctx.mode;
   settings::save(st);  // survives a restart; the log gets the context again in roleLogOpened()
-  logContext();
-  say("OK session %s stop %s h %.2f mode %s", ctx.sessionId, ctx.stopId, ctx.heightCm / 100.0, kModes[ctx.mode & 3]);
+  if (gate.set(ctx, win.active)) {
+    logContext();
+    sayContext("OK ", ctx);
+  } else {
+    sayContext("OK from next slot: ", ctx);
+  }
   return true;
 }
 
 void roleStatus() {
-  say("session %s stop %s h %.2f mode %s", ctx.sessionId, ctx.stopId, ctx.heightCm / 100.0, kModes[ctx.mode & 3]);
+  const core::ContextRec& ctx = gate.requested();
+  sayContext("", ctx);
   say("slots %lu received %lu last %s", static_cast<unsigned long>(slots), static_cast<unsigned long>(rxCount),
       lastResult);
 }
 
 void roleDisplay(char l[3][12]) {
+  const core::ContextRec& ctx = gate.requested();
   snprintf(l[0], 12, "%s", ctx.stopId);
   if (gnss::timeFresh()) snprintf(l[1], 12, "h%.1f GPS%u", ctx.heightCm / 100.0, gnss::state().nsat);
   else if (gnss::timeValid()) snprintf(l[1], 12, "h%.1f HOLD", ctx.heightCm / 100.0);

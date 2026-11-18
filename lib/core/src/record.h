@@ -7,7 +7,7 @@
 namespace core {
 
 constexpr size_t kRecordLen = 32;
-enum RecordType : uint8_t { kRecRxSlot = 1, kRecTx = 2, kRecMarker = 3, kRecContext = 5, kRecHeader = 6 };
+enum RecordType : uint8_t { kRecRxSlot = 1, kRecTx = 2, kRecMarker = 3, kRecRxFrame = 4, kRecContext = 5, kRecHeader = 6 };
 
 // RxSlot flag bits
 constexpr uint8_t kFlagReceived = 0x01;   // our packet, matching cycle and SF
@@ -17,6 +17,7 @@ constexpr uint8_t kFlagTimeValid = 0x08;  // GNSS time valid when the window clo
 constexpr uint8_t kFlagCrcErr = 0x10;     // a frame with a LoRa CRC error arrived (radio fields kept)
 constexpr uint8_t kFlagNotListened = 0x20;  // window not monitored (opened late or skipped): no evidence of loss
 constexpr uint8_t kFlagHoldover = 0x40;     // time from holdover (no valid RMC for > 10 s, < 600 s)
+constexpr uint8_t kFlagContextChanged = 0x80;  // stop/height/mode changed while the window was open
 
 struct RxSlotRec {
   uint8_t sf;
@@ -32,6 +33,24 @@ struct RxSlotRec {
   uint8_t rxFix;
   void encode(uint8_t out[kRecordLen]) const;
   static bool decode(const uint8_t* d, RxSlotRec* r);
+};
+
+// One per received frame in our packet format (application CRC valid), whatever its cycle.
+// It measures the inter-node clock offset continuously and exposes a cycle disagreement
+// (e.g. one receiver off by the GPS-UTC leap seconds after a cold start).
+constexpr uint8_t kFrameTimingValid = 0x01;  // arrivalUs comes from the RX_DONE edge
+constexpr uint8_t kFrameMatched = 0x02;      // cycle and SF match the window: the slot's packet
+struct RxFrameRec {
+  uint8_t sf;        // window SF
+  uint32_t cycle;    // window cycle
+  uint32_t rxCycle;  // cycle in the packet
+  uint8_t rxSf, flags;
+  int32_t arrivalUs;  // RX_DONE minus scheduled end of the window's packet (UTC, us)
+  int16_t rssiPkt10, snr100;
+  uint8_t txNode;
+  uint16_t txSeq;
+  void encode(uint8_t out[kRecordLen]) const;
+  static bool decode(const uint8_t* d, RxFrameRec* r);
 };
 
 // kTxNoTime is reserved: without GNSS time the cycle is unknown, so no record can be written.
