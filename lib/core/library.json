@@ -1,0 +1,7 @@
+{
+  "name": "core",
+  "version": "1.0.0",
+  "description": "Hardware-free schedule, packet, NMEA, record, command and button logic for the LoRa forest logger",
+  "frameworks": "*",
+  "platforms": "*"
+}
