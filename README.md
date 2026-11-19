@@ -2,6 +2,8 @@
 
 Stage-1 firmware for two M5Stack Unit C6L (U202) boards, each with a Unit GPS v1.1 on the Grove port. One board is the **tower** node (transmitter), the other the **mobile** node (receiver and logger). Design: [DESIGN.md](DESIGN.md); method: `../methodology.md`, Sections 4.2–4.3 and 6.2.
 
+This repository holds the firmware only. The methodology, the host tool `scripts/lora_logs.py` with its decoder `src/lora_forest/logfile.py`, and the audit report referenced below belong to a private thesis repository and are not published here.
+
 ## Build and flash
 
 Tools: PlatformIO (`~/.platformio/penv/bin/pio`). Run from this folder.
@@ -101,3 +103,7 @@ python3 ../scripts/lora_logs.py convert ../data/raw/20270112_mobile2/L0003.bin
 ## Not yet verified on hardware
 
 All code is built and unit-tested on the computer only. Before the pilot: board bring-up (expander, radio, GNSS, display), a two-node bench link, NMEA latency (`latency`), then the bench tests of methodology Section 4.2.
+
+## License
+
+Code: MIT ([LICENSE](LICENSE)). Documentation (`*.md`): [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
