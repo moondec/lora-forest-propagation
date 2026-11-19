@@ -51,6 +51,12 @@ Command parseCommand(const char* line) {
   if (!strcmp(verb, "status")) { c.cmd = Cmd::Status; return c; }
   if (!strcmp(verb, "files")) { c.cmd = Cmd::Files; return c; }
   if (!strcmp(verb, "help")) { c.cmd = Cmd::Help; return c; }
+  if (!strcmp(verb, "gps")) {
+    if (rest && *rest && strcmp(rest, "reset")) return error("usage: gps | gps reset");
+    c.cmd = Cmd::Gps;
+    c.a = (rest && *rest) ? 1 : 0;  // 1 = factory reset of the receiver
+    return c;
+  }
   if (!rest || !*rest) return error("missing argument");
 
   if (!strcmp(verb, "session") || !strcmp(verb, "stop")) {

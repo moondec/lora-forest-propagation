@@ -70,6 +70,10 @@ void test_parse_format_needs_confirm() {
 
 void test_parse_misc() {
   TEST_ASSERT_TRUE(parseCommand("status").cmd == Cmd::Status);
+  TEST_ASSERT_TRUE(parseCommand("gps").cmd == Cmd::Gps);
+  TEST_ASSERT_EQUAL_INT(0, parseCommand("gps").a);
+  TEST_ASSERT_EQUAL_INT(1, parseCommand("gps reset").a);
+  TEST_ASSERT_TRUE(parseCommand("gps resett").cmd == Cmd::Error);
   TEST_ASSERT_TRUE(parseCommand("").cmd == Cmd::None);
   TEST_ASSERT_TRUE(parseCommand("frobnicate 3").cmd == Cmd::Error);
   Command c = parseCommand("latency -120");

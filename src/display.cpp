@@ -9,7 +9,8 @@
 namespace display {
 
 // Hardware SPI on the bus already started by board::begin(); U8g2 drives its own CS (G6).
-static U8G2_SSD1306_64X48_ER_F_4W_HW_SPI oled(U8G2_R0, cfg::kPinOledCs, cfg::kPinOledDc, cfg::kPinOledRst);
+// R2: rotated 180 degrees, the natural reading orientation of the mounted unit.
+static U8G2_SSD1306_64X48_ER_F_4W_HW_SPI oled(U8G2_R2, cfg::kPinOledCs, cfg::kPinOledDc, cfg::kPinOledRst);
 static char banner[12];
 static char last[3][12];
 

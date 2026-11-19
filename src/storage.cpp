@@ -26,7 +26,7 @@ static size_t freeEstimate = 0;
 static size_t measureFree() { return LittleFS.totalBytes() - LittleFS.usedBytes(); }
 
 bool begin() {
-  // The partition is labelled "littlefs" (partitions_8mb.csv); the core's default label is "spiffs".
+  // The partition is labelled "littlefs" (partitions_16mb.csv); the core's default label is "spiffs".
   if (!LittleFS.begin(false, "/littlefs", 10, "littlefs")) return false;
   if (!LittleFS.exists("/log")) LittleFS.mkdir("/log");
   freeEstimate = measureFree();

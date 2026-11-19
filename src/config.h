@@ -9,8 +9,8 @@
 
 namespace cfg {
 
-constexpr uint8_t kFwVersion = 1;
-constexpr const char* kFwTag = "1.0.0";
+constexpr uint8_t kFwVersion = 2;  // 2: record type 4 (RxFrameRec), 16 MB layout
+constexpr const char* kFwTag = "2.0.0";
 
 #ifdef ROLE_TOWER
 constexpr bool kTower = true;

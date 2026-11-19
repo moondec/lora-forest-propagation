@@ -29,7 +29,9 @@ For BLE use any Nordic-UART terminal on the phone, e.g. *Serial Bluetooth Termin
 | Command | Node | Effect |
 |---|---|---|
 | `help` | both | list commands |
-| `status` | both | role, GNSS time and fix, log file, free flash, counters |
+| `status` | both | role, GNSS time and fix, bytes received from the GPS since boot (`nmea N B`; 0 means a silent GPS), log file, free flash, counters |
+| `gps` | both | last 32 raw NMEA lines from the receiver; `$GNRMC,,V,...` with an empty time field means the receiver tracks no satellite at all |
+| `gps reset` | both | CASIC factory reset of the GPS receiver (undoes configuration left by other firmware, e.g. Meshtastic), then 115200 baud restored and saved; cold start follows |
 | `session W1_ME_20270112` | mobile | session ID (≤ 14 chars: letters, digits, `-`, `_`) |
 | `stop ME-T1-100` | mobile | stop ID written into every following record |
 | `h 1.3` | mobile | pole height in m |
@@ -88,7 +90,7 @@ python3 ../scripts/lora_logs.py convert ../data/raw/20270112_mobile2/L0003.bin
 
 ## Log format
 
-32-byte little-endian records (types: header, context, RX slot, RX frame, TX, marker), defined in `lib/core/src/record.h` and decoded by `src/lora_forest/logfile.py`. A test vector shared by the C++ and Python tests keeps the two in step. Flash holds about 13 days of continuous slots per node.
+32-byte little-endian records (types: header, context, RX slot, RX frame, TX, marker), defined in `lib/core/src/record.h` and decoded by `src/lora_forest/logfile.py`. A test vector shared by the C++ and Python tests keeps the two in step. Flash (13.5 MB LittleFS partition of the 16 MB chip) holds about 35 days of continuous slots per node.
 
 ## Radio and sensor details
 

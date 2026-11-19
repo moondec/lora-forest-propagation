@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <esp_timer.h>
+#include <string.h>
 
 #include "config.h"
 #include "timebase.h"
@@ -13,6 +14,28 @@ static core::TimeBase tb;
 static core::GnssState snap;
 static int32_t latency = 0;
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+// Bytes from the GPS UART: tells a silent receiver (wiring, standby) from one without a fix.
+static volatile uint32_t uartBytes = 0;
+// Last raw NMEA lines, for the gps command (shows what the receiver actually sends).
+constexpr int kRawLines = 32, kRawLen = 84;  // 32 lines hold one full burst with all GSV
+static char rawLine[kRawLen];
+static int rawLen = 0;
+static char raw[kRawLines][kRawLen];
+static int rawHead = 0;
+
+static void keepRaw(char c) {
+  if (c == '\r') return;
+  if (c != '\n') {
+    if (rawLen < kRawLen - 1) rawLine[rawLen++] = (c >= 32 && c < 127) ? c : '?';
+    return;
+  }
+  rawLine[rawLen] = '\0';
+  portENTER_CRITICAL(&mux);
+  memcpy(raw[rawHead], rawLine, rawLen + 1);
+  rawHead = (rawHead + 1) % kRawLines;
+  portEXIT_CRITICAL(&mux);
+  rawLen = 0;
+}
 // One UART character (10 bits) at 115200 baud.
 constexpr int64_t kCharUs = 10 * 1000000LL / cfg::kGnssBaud;
 
@@ -25,6 +48,8 @@ static void onUart() {
     const int c = Serial1.read();
     if (c < 0) break;
     --avail;
+    uartBytes = uartBytes + 1;
+    keepRaw(static_cast<char>(c));
     const int64_t t = now - static_cast<int64_t>(avail) * kCharUs;
     if (parser.feed(static_cast<char>(c), t)) {
       portENTER_CRITICAL(&mux);
@@ -58,6 +83,38 @@ core::GnssState state() {
   core::GnssState s = snap;
   portEXIT_CRITICAL(&mux);
   return s;
+}
+
+uint32_t bytesReceived() { return uartBytes; }
+
+void factoryReset() {
+  // CASIC (ATGM336H / AT6668): PCAS10,3 = factory reset and restart. The factory baud may be
+  // 9600, so 115200 is then set at 9600 (PCAS01,5) and saved (PCAS00); at the wrong baud each
+  // command is just noise to the receiver.
+  Serial1.print("$PCAS10,3*1F\r\n");
+  Serial1.flush();
+  delay(1200);
+  Serial1.updateBaudRate(9600);
+  Serial1.print("$PCAS01,5*19\r\n");
+  Serial1.flush();
+  delay(200);
+  Serial1.updateBaudRate(cfg::kGnssBaud);
+  delay(200);
+  Serial1.print("$PCAS00*01\r\n");
+  Serial1.flush();
+}
+
+void lastLines(void (*emit)(const char*)) {
+  char copy[kRawLines][kRawLen];
+  int head;
+  portENTER_CRITICAL(&mux);
+  memcpy(copy, raw, sizeof copy);
+  head = rawHead;
+  portEXIT_CRITICAL(&mux);
+  for (int i = 0; i < kRawLines; ++i) {
+    const char* l = copy[(head + i) % kRawLines];
+    if (*l) emit(l);
+  }
 }
 
 bool timeValid() {

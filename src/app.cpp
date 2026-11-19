@@ -101,8 +101,9 @@ static void formatLog() {
 static void printStatus() {
   const core::GnssState g = gnss::state();
   say("%s node %u fw %s", cfg::kTower ? "TOWER" : "MOBILE", st.nodeId, cfg::kFwTag);
-  say("time %s utc %lld fix %u sat %u hdop %.1f", gnss::timeFresh() ? "ok" : (gnss::timeValid() ? "HOLDOVER" : "NONE"),
-      gnss::timeValid() ? gnss::utcMs() / 1000 : 0LL, gnss::fixCode(), g.nsat, g.hdop);
+  say("time %s utc %lld fix %u sat %u hdop %.1f nmea %lu B", gnss::timeFresh() ? "ok" : (gnss::timeValid() ? "HOLDOVER" : "NONE"),
+      gnss::timeValid() ? gnss::utcMs() / 1000 : 0LL, gnss::fixCode(), g.nsat, g.hdop,
+      static_cast<unsigned long>(gnss::bytesReceived()));
   say("log %s free %u kB%s dropped %lu latency %ld ms", storage::isOpen() ? storage::currentName() : "-",
       static_cast<unsigned>(storage::freeKb()), storage::full() ? " FULL" : "",
       static_cast<unsigned long>(storage::droppedRecords()), static_cast<long>(st.latencyMs));
@@ -110,7 +111,7 @@ static void printStatus() {
 }
 
 static void printHelp() {
-  say("status | files | dump <file> | erase <file|all> confirm | format confirm | latency <ms> | id <n> | marker <text>");
+  say("status | files | dump <file> | erase <file|all> confirm | format confirm | gps [reset] | latency <ms> | id <n> | marker <text>");
   if (cfg::kTower) say("window HH:MM-HH:MM | window off   (UTC transmit window)");
   else say("session <id> | stop <id> | h <m> | mode static|sweep|reference|drift");
 }
@@ -144,6 +145,15 @@ static void handle(const core::Command& c) {
       return;
     case core::Cmd::Marker: writeMarker(c.arg); return;
     case core::Cmd::Format: formatLog(); return;
+    case core::Cmd::Gps:
+      if (c.a) {
+        gnss::factoryReset();
+        say("OK gps reset; cold start, allow a few minutes for a fix");
+      } else {
+        gnss::lastLines(emitLine);
+        say("OK gps");
+      }
+      return;
     default:
       if (!roleCommand(c)) say("ERR not available on this node");
   }

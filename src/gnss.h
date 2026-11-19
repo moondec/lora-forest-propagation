@@ -17,5 +17,11 @@ int64_t utcMs();  // valid only if timeValid()
 int64_t utcUs();
 // 0 none, 1 time only, 2 position fix (as in the packet).
 uint8_t fixCode();
+// Total bytes received from the GPS since boot.
+uint32_t bytesReceived();
+// Emits the last raw NMEA lines, oldest first (non-printable bytes shown as '?').
+void lastLines(void (*emit)(const char*));
+// CASIC factory reset of the receiver, then 115200 baud restored and saved. Blocks ~1.5 s.
+void factoryReset();
 
 }  // namespace gnss
